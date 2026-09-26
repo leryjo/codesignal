@@ -2,32 +2,21 @@
 set -euo pipefail
 
 APP_NAME="${APP_NAME:-codesignal}"
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_DIR=$(dirname "$0")
+cd "$SCRIPT_DIR"
+SCRIPT_DIR=$(pwd)
 DATA_DIR="$SCRIPT_DIR/data"
 
-# Buat struktur folder data
-mkdir -p \
-  "$DATA_DIR/chrome_profiles" \
-  "$DATA_DIR/screenshots" \
-  "$DATA_DIR/screenshots_login"
-
-# Pastikan akun.txt ada
+mkdir -p "$DATA_DIR/chrome_profiles" "$DATA_DIR/screenshots" "$DATA_DIR/screenshots_login"
 touch "$DATA_DIR/akun.txt"
 
-# Hapus flag/pid lama (jika ada)
-rm -f "$DATA_DIR/.loop_enabled.flag" \
-      "$DATA_DIR/loop.pid" \
-      "$DATA_DIR/login.pid" 2>/dev/null || true
-
-# Hapus container lama jika masih ada
+rm -f "$DATA_DIR/.loop_enabled.flag" "$DATA_DIR/loop.pid" "$DATA_DIR/login.pid" || true
 docker rm -f "$APP_NAME" >/dev/null 2>&1 || true
 
-# Build image
 echo "[*] Building image: $APP_NAME ..."
 docker build -t "$APP_NAME" .
 
-# Jalankan container (detached)
-echo "[*] Starting container: $APP_NAME ..."
+echo "[*] Starting container: $APP_NAME (idle) ..."
 docker run -d \
   --restart unless-stopped \
   --privileged \
@@ -38,7 +27,28 @@ docker run -d \
   -e TG_TOKEN="${TG_TOKEN:-8333206393:AAG8Z76SSbgAEAC1a3oPT8XhAF9t_rDOq3A}" \
   -e TG_CHAT_ID="${TG_CHAT_ID:--1003532458425}" \
   -v "$DATA_DIR:/codesignal/data" \
-  "$APP_NAME"
+  "$APP_NAME" \
+  idle
+
+echo "[*] Menunggu container siap..."
+i=1
+while [ "$i" -le 20 ]; do
+  status=$(docker inspect -f "{{.State.Status}}" "$APP_NAME" 2>/dev/null || echo missing)
+  if [ "$status" = "running" ]; then
+    break
+  fi
+  i=$((i + 1))
+  sleep 1
+done
+
+echo "[*] Status: $(docker inspect -f "{{.State.Status}}" "$APP_NAME")"
+
+running=$(docker inspect -f "{{.State.Running}}" "$APP_NAME" 2>/dev/null || echo false)
+if [ "$running" != "true" ]; then
+  echo "ERROR: container tidak running. Log:"
+  docker logs --tail 80 "$APP_NAME" || true
+  exit 1
+fi
 
 echo ""
 echo "========================================"
@@ -52,7 +62,7 @@ echo "  Start login : bash login"
 echo "  Start loop  : bash startloop"
 echo "  Stop loop   : bash stoploop"
 echo "  Log Docker  : docker logs -f $APP_NAME"
-echo "  Cek proses  : docker exec -it $APP_NAME pgrep -af 'login.py|run.py'"
+echo "  Cek proses  : docker exec -it $APP_NAME pgrep -af login.py"
 echo "  Masuk shell : docker exec -it $APP_NAME bash"
 echo ""
 echo "Pastikan file data/akun.txt sudah diisi dengan format:"
