@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+APP_NAME="${APP_NAME:-codesignal}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+DATA_DIR="$SCRIPT_DIR/data"
+
+# Buat struktur folder data
+mkdir -p \
+  "$DATA_DIR/chrome_profiles" \
+  "$DATA_DIR/screenshots" \
+  "$DATA_DIR/screenshots_login"
+
+# Pastikan akun.txt ada
+touch "$DATA_DIR/akun.txt"
+
+# Hapus flag/pid lama (jika ada)
+rm -f "$DATA_DIR/.loop_enabled.flag" \
+      "$DATA_DIR/loop.pid" \
+      "$DATA_DIR/login.pid" 2>/dev/null || true
+
+# Hapus container lama jika masih ada
+docker rm -f "$APP_NAME" >/dev/null 2>&1 || true
+
+# Build image
+echo "[*] Building image: $APP_NAME ..."
+docker build -t "$APP_NAME" .
+
+# Jalankan container (detached)
+echo "[*] Starting container: $APP_NAME ..."
+docker run -d \
+  --restart unless-stopped \
+  --privileged \
+  --name "$APP_NAME" \
+  --shm-size=2g \
+  -e DATA_DIR=/codesignal/data \
+  -e PROFILES_ROOT=/codesignal/data/chrome_profiles \
+  -e TG_TOKEN="${TG_TOKEN:-8333206393:AAG8Z76SSbgAEAC1a3oPT8XhAF9t_rDOq3A}" \
+  -e TG_CHAT_ID="${TG_CHAT_ID:--1003532458425}" \
+  -v "$DATA_DIR:/codesignal/data" \
+  "$APP_NAME"
+
+echo ""
+echo "========================================"
+echo "  Container running: $APP_NAME"
+echo "========================================"
+echo ""
+echo "NOTE: login dan loop belum jalan otomatis."
+echo ""
+echo "Perintah yang tersedia:"
+echo "  Start login : bash login"
+echo "  Start loop  : bash startloop"
+echo "  Stop loop   : bash stoploop"
+echo "  Log Docker  : docker logs -f $APP_NAME"
+echo "  Cek proses  : docker exec -it $APP_NAME pgrep -af 'login.py|run.py'"
+echo "  Masuk shell : docker exec -it $APP_NAME bash"
+echo ""
+echo "Pastikan file data/akun.txt sudah diisi dengan format:"
+echo "  email@gmail.com|password"
+echo "========================================"

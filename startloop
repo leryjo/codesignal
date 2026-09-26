@@ -1,0 +1,177 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CONTAINER_NAME="${CONTAINER_NAME:-codesignal}"
+
+echo "[1] Cek container..."
+docker ps --format '{{.Names}}' | grep -qx "$CONTAINER_NAME" || {
+  echo "Container $CONTAINER_NAME belum running. Jalankan dulu: bash run"
+  exit 1
+}
+
+echo "[2] Cleanup log/lock/flag lama..."
+docker exec -i "$CONTAINER_NAME" bash -s << 'CLEANUP'
+set +e
+DATA_DIR="${DATA_DIR:-/codesignal/data}"
+mkdir -p "$DATA_DIR"
+: > "$DATA_DIR/bot_log.txt"
+: > "$DATA_DIR/loop_log.txt"
+: > "$DATA_DIR/login_log.txt"
+: > "$DATA_DIR/akun_bermasalah.txt"
+: > "$DATA_DIR/hasil.txt"
+echo "{}" > "$DATA_DIR/loop_status.json"
+find "$DATA_DIR" -maxdepth 1 -type f -name ".lock_*" -delete 2>/dev/null
+rm -f "$DATA_DIR/loop.pid" "$DATA_DIR/.loop_enabled.flag"
+if ! pgrep -x Xvfb >/dev/null 2>&1; then
+  echo "[cleanup] Starting Xvfb on :99 ..."
+  Xvfb :99 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset >/dev/null 2>&1 &
+  sleep 1
+fi
+export DISPLAY=:99
+echo "CLEANUP DONE"
+CLEANUP
+
+echo "[3] Start run.py di dalam container..."
+docker exec -i "$CONTAINER_NAME" bash -s << 'STARTLOOP'
+set +e
+CODE_DIR="${CODE_DIR:-/codesignal}"
+DATA_DIR="${DATA_DIR:-/codesignal/data}"
+export DISPLAY=:99
+export PYTHONUNBUFFERED=1
+mkdir -p "$DATA_DIR"
+touch "$DATA_DIR/.loop_enabled.flag" "$DATA_DIR/loop_log.txt" "$DATA_DIR/bot_log.txt"
+
+log() {
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$DATA_DIR/loop_log.txt"
+}
+
+log "LOOP ENABLED by host command"
+
+if ! pgrep -x Xvfb >/dev/null 2>&1; then
+  log "Starting Xvfb..."
+  Xvfb :99 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset >/dev/null 2>&1 &
+  sleep 1
+fi
+
+REAL_PID=""
+for dir in /proc/[0-9]*; do
+  pid=${dir#/proc/}
+  if [ ! -r "$dir/cmdline" ]; then
+    continue
+  fi
+  cmd=$(tr '\0' ' ' < "$dir/cmdline" 2>/dev/null || true)
+  case "$cmd" in
+    *python*run.py*)
+      if kill -0 "$pid" 2>/dev/null; then
+        REAL_PID=$pid
+        break
+      fi
+      ;;
+  esac
+done
+
+if [ -n "$REAL_PID" ]; then
+  log "run.py SUDAH berjalan (pid=$REAL_PID) — skip start"
+  echo "STATUS: already_running pid=$REAL_PID"
+  exit 0
+fi
+
+rm -f "$DATA_DIR/loop.pid"
+
+PROFILE_COUNT=$(find "$DATA_DIR" -maxdepth 1 -type d -name 'chrome_profile_*' 2>/dev/null | wc -l)
+if [ "$PROFILE_COUNT" -eq 0 ]; then
+  log "LOOP BELUM START: belum ada chrome_profile_*. Jalankan: bash login"
+  echo "STATUS: no_profile"
+  exit 0
+fi
+log "Ditemukan $PROFILE_COUNT profile"
+
+if [ ! -f "$DATA_DIR/akun.txt" ] || [ ! -s "$DATA_DIR/akun.txt" ]; then
+  log "ERROR: akun.txt kosong / tidak ada"
+  echo "STATUS: no_akun"
+  exit 1
+fi
+
+if [ ! -f "$CODE_DIR/run.py" ]; then
+  log "ERROR: $CODE_DIR/run.py tidak ditemukan"
+  echo "STATUS: no_runpy"
+  exit 1
+fi
+
+cd "$DATA_DIR"
+log "Menjalankan: python3 -u $CODE_DIR/run.py"
+
+setsid nohup python3 -u "$CODE_DIR/run.py" >> "$DATA_DIR/loop_log.txt" 2>&1 < /dev/null &
+NEW_PID=$!
+echo "$NEW_PID" > "$DATA_DIR/loop.pid"
+disown 2>/dev/null || true
+
+sleep 2
+
+if kill -0 "$NEW_PID" 2>/dev/null; then
+  log "run.py STARTED OK (pid=$NEW_PID)"
+  echo "STATUS: started pid=$NEW_PID"
+else
+  log "ERROR: run.py gagal start (pid=$NEW_PID sudah mati). Log terakhir:"
+  tail -n 30 "$DATA_DIR/loop_log.txt" || true
+  echo "STATUS: start_failed"
+  exit 1
+fi
+STARTLOOP
+
+echo ""
+echo "[4] Status proses di dalam container:"
+echo "----------------------------------------"
+docker exec -i "$CONTAINER_NAME" bash -s << 'STATUS'
+echo ">>> Xvfb:"
+ps -eo pid,cmd 2>/dev/null | grep '[X]vfb' || echo "  (tidak ada)"
+
+echo ""
+echo ">>> run.py (python):"
+FOUND=0
+for dir in /proc/[0-9]*; do
+  pid=${dir#/proc/}
+  if [ ! -r "$dir/cmdline" ]; then
+    continue
+  fi
+  cmd=$(tr '\0' ' ' < "$dir/cmdline" 2>/dev/null || true)
+  case "$cmd" in
+    *python*run.py*)
+      echo "  pid=$pid  $cmd"
+      FOUND=1
+      ;;
+  esac
+done
+if [ "$FOUND" -eq 0 ]; then
+  echo "  (tidak ada — run.py BELUM jalan)"
+fi
+
+echo ""
+echo ">>> loop.pid file:"
+if [ -f /codesignal/data/loop.pid ]; then
+  PID=$(cat /codesignal/data/loop.pid 2>/dev/null || true)
+  echo "  pid file = $PID"
+  if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+    echo "  status   = HIDUP"
+    ps -p "$PID" -o pid,etime,cmd --no-headers 2>/dev/null || true
+  else
+    echo "  status   = MATI / tidak valid"
+  fi
+else
+  echo "  (tidak ada loop.pid)"
+fi
+
+echo ""
+echo ">>> chrome_profile_* count:"
+find /codesignal/data -maxdepth 1 -type d -name 'chrome_profile_*' 2>/dev/null | wc -l
+
+echo ""
+echo ">>> 25 baris terakhir loop_log.txt:"
+tail -n 25 /codesignal/data/loop_log.txt 2>/dev/null || echo "  (log kosong)"
+STATUS
+echo "----------------------------------------"
+
+echo ""
+echo "[5] Ikuti log live. CTRL+C hanya keluar dari tampilan log, loop tetap jalan."
+echo "================================================================================"
+docker exec -it "$CONTAINER_NAME" bash -c 'tail -n 50 -f /codesignal/data/loop_log.txt'

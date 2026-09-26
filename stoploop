@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CONTAINER_NAME="${CONTAINER_NAME:-codesignal}"
+
+docker ps --format '{{.Names}}' | grep -qx "$CONTAINER_NAME" || {
+  echo "Container $CONTAINER_NAME belum running."
+  exit 1
+}
+
+docker exec -i "$CONTAINER_NAME" bash -s << 'STOP'
+set +e
+DATA_DIR="${DATA_DIR:-/codesignal/data}"
+
+# Matikan flag & pid
+rm -f "$DATA_DIR/.loop_enabled.flag" "$DATA_DIR/loop.pid" 2>/dev/null || true
+
+# Kill proses run.py dulu
+pkill -f "[r]un.py" 2>/dev/null || true
+sleep 1
+
+# Kill chrome & chromedriver (soft lalu force)
+pkill -f chromedriver 2>/dev/null || true
+pkill -f "google-chrome" 2>/dev/null || true
+pkill -f chromium 2>/dev/null || true
+pkill -f chrome 2>/dev/null || true
+sleep 1
+pkill -9 -f chromedriver 2>/dev/null || true
+pkill -9 -f "google-chrome" 2>/dev/null || true
+pkill -9 -f chromium 2>/dev/null || true
+pkill -9 -f chrome 2>/dev/null || true
+pkill -9 -f "[r]un.py" 2>/dev/null || true
+sleep 1
+
+# Hapus lock file Chrome di semua profile
+find "$DATA_DIR" -name SingletonLock -delete 2>/dev/null || true
+find "$DATA_DIR" -name SingletonCookie -delete 2>/dev/null || true
+find "$DATA_DIR" -name SingletonSocket -delete 2>/dev/null || true
+find "$DATA_DIR" -name DevToolsActivePort -delete 2>/dev/null || true
+
+# Jangan kill Xvfb utama (entrypoint)
+
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] LOOP DISABLED + STOPPED + locks cleaned" >> "$DATA_DIR/bot_log.txt"
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] LOOP DISABLED + STOPPED + locks cleaned" >> "$DATA_DIR/loop_log.txt"
+echo "LOCKS_CLEANED"
+STOP
+
+echo "Loop dimatikan, Chrome di-kill, dan lock profile dibersihkan."
