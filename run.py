@@ -22,8 +22,8 @@ from selenium.webdriver.common.action_chains import ActionChains
 import subprocess
 
 # ====================== SETTING ======================
-NUM_PARALLEL = 5
-WAIT_SECONDS = 60
+NUM_PARALLEL = 10
+WAIT_SECONDS = 10
 
 # ====================== TELEGRAM — PROFESSIONAL DEVELOPER MODE ======================
 # Mode: "pro" | "quiet" | "debug"
