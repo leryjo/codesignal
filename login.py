@@ -11,7 +11,7 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 
 # ====================== SETTING ======================
-NUM_PARALLEL = 5              # Berapa clone Chrome dibuka bersamaan
+NUM_PARALLEL = 10              # Berapa clone Chrome dibuka bersamaan
 DELAY_ANTAR_CLONE = 3         # Delay (detik) setiap kali buka clone baru
 WAIT_AFTER_LOGIN = 18         # Tunggu setelah submit form login (detik)
 WAIT_AFTER_SKIP = 6           # Tunggu setelah klik Skip (detik)
