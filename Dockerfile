@@ -56,7 +56,7 @@ RUN set -eux; \
 
 # Python packages yang dibutuhkan kedua script
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir psutil requests selenium==4.48.0 Pillow pyvirtualdisplay mss pyautogui colorama
+    pip install --no-cache-dir psutil requests selenium==4.48.0 Pillow pyvirtualdisplay mss pyautogui colorama undetected-chromedriver
 
 # Copy script
 COPY login.py run.py entrypoint.sh ./
